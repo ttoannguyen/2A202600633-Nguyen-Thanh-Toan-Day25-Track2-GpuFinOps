@@ -77,6 +77,31 @@ def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount:
     return "on_demand"
 
 
+def cache_break_even_reads(
+    write_cost_per_m: float,
+    read_discount: float = 0.10,
+    price_in_per_m: float = 1.0,
+) -> float:
+    """Reads per cached prefix needed before cache write cost pays off."""
+    savings_per_read = price_in_per_m * (1.0 - read_discount)
+    if savings_per_read <= 0:
+        return float("inf")
+    return write_cost_per_m / savings_per_read
+
+
+def cache_is_worth_it(
+    avg_cache_reads: float,
+    write_cost_per_m: float,
+    read_discount: float = 0.10,
+    price_in_per_m: float = 1.0,
+) -> bool:
+    """Cache only saves money when cumulative read discounts exceed write cost."""
+    if avg_cache_reads <= 0 or write_cost_per_m < 0:
+        return False
+    savings_per_read = price_in_per_m * (1.0 - read_discount)
+    return avg_cache_reads * savings_per_read > write_cost_per_m
+
+
 def spot_checkpoint_cost(
     job_hours: float,
     spot_hr: float,

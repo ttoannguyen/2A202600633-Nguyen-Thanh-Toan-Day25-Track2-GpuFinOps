@@ -53,6 +53,22 @@ def run(verbose: bool = True) -> dict:
     }
 
     md = report.build_report(baseline, optimized, levers, sustainability=sust)
+    rs = r2.get("reasoning", {})
+    if rs:
+        cap_save = rs["reasoning_cost"] * 0.9  # cap reasoning to 10% of current share
+        md += (
+            "\n\n## Reasoning budget (Ext4)\n\n"
+            f"- Reasoning traffic: {rs['reasoning_pct_traffic']:.1f}% requests, "
+            f"{rs['reasoning_pct_cost']:.1f}% cost, {rs['reasoning_pct_wh']:.1f}% energy\n"
+            f"- Rule: route reasoning only when task complexity score < threshold\n"
+            f"- Capping reasoning to 10% traffic could save ~${cap_save:,.0f}/month\n"
+        )
+    if r3.get("carbon_savings_g"):
+        md += (
+            f"\n## Carbon-aware scheduling (Ext5)\n\n"
+            f"- Move interruptible training to `{r3['best_region']}`: "
+            f"~{r3['carbon_savings_g']:,.0f} gCO2e/month saved vs us-east-1\n"
+        )
     out_md = os.path.join(ROOT, "outputs", "report.md")
     os.makedirs(os.path.dirname(out_md), exist_ok=True)
     with open(out_md, "w") as f:

@@ -10,6 +10,42 @@ from missions._common import load_csv, num, catalog_by_type
 from finops import metrics
 
 
+MBU_BOUND_THRESHOLD = 0.35
+
+
+def _dpgb(gtype: str, cat: dict) -> float:
+    vram = num(cat[gtype]["hbm_gb"])
+    return num(cat[gtype]["on_demand_hr"]) / vram if vram else float("inf")
+
+
+def _mbu_rightsize_hints(summary, cat: dict) -> list:
+    """Suggest cheaper GPUs for memory-bound inference (low MBU)."""
+    hints = []
+    types = list(cat.keys())
+    for s in summary:
+        if s["mbu"] >= MBU_BOUND_THRESHOLD:
+            continue
+        cur = s["gpu_type"]
+        cur_bw = num(cat[cur]["peak_bw_tbs"])
+        best = None
+        for g in types:
+            if num(cat[g]["peak_bw_tbs"]) < cur_bw * 0.8:
+                continue
+            if _dpgb(g, cat) >= _dpgb(cur, cat):
+                continue
+            if best is None or _dpgb(g, cat) < _dpgb(best, cat):
+                best = g
+        if best and best != cur:
+            savings_pct = (1 - _dpgb(best, cat) / _dpgb(cur, cat)) * 100
+            hints.append({
+                "gpu_id": s["gpu_id"], "current": cur, "suggest": best,
+                "mbu": s["mbu"], "dpgb_cur": round(_dpgb(cur, cat), 4),
+                "dpgb_new": round(_dpgb(best, cat), 4),
+                "savings_pct": round(savings_pct, 1),
+            })
+    return hints
+
+
 def run(verbose: bool = True) -> dict:
     tel = load_csv("gpu_telemetry.csv")
     cat = catalog_by_type()
@@ -41,6 +77,7 @@ def run(verbose: bool = True) -> dict:
         })
 
     lies = metrics.flag_util_lies(summary)
+    rightsize = _mbu_rightsize_hints(summary, cat)
     idle_waste = 0.0
     for s in summary:
         on_demand = num(catalog_by_type()[s["gpu_type"]]["on_demand_hr"])
@@ -53,8 +90,15 @@ def run(verbose: bool = True) -> dict:
             print(f"{s['gpu_id']:14}{s['gpu_type']:7}{s['gpu_util_pct']:>7}{s['mfu']:>7}{s['mbu']:>7}{s['idle_hours']:>8}")
         print(f"\nGPU-Util LIES (util>=90% but MFU<30%): {[l['gpu_id'] for l in lies]}")
         print(f"Idle waste (1 day): ${idle_waste:,.2f}  ->  ${idle_waste*30:,.0f}/month")
+        if rightsize:
+            print("\n[Ext2] MBU right-size hints (memory-bound, lower $/GB-VRAM):")
+            for h in rightsize:
+                print(f"  {h['gpu_id']:14} {h['current']} -> {h['suggest']}  "
+                      f"MBU={h['mbu']:.2f}  ${h['dpgb_cur']:.4f}->${h['dpgb_new']:.4f}/GB  "
+                      f"save {h['savings_pct']:.0f}%")
 
-    return {"summary": summary, "lies": lies, "idle_waste_daily": round(idle_waste, 2)}
+    return {"summary": summary, "lies": lies, "idle_waste_daily": round(idle_waste, 2),
+            "rightsize_hints": rightsize}
 
 
 if __name__ == "__main__":
